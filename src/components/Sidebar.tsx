@@ -36,6 +36,28 @@ export function Sidebar({ runs, selected, onSelect }: Props) {
         <span className="text-base">📊</span> Dashboard global
       </button>
 
+      <button
+        onClick={() => onSelect("qa")}
+        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
+          selected === "qa"
+            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
+            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
+        }`}
+      >
+        <span className="text-base">🧪</span> QA por issue
+      </button>
+
+      <button
+        onClick={() => onSelect("push")}
+        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
+          selected === "push"
+            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
+            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
+        }`}
+      >
+        <span className="text-base">🚀</span> Push en tiempo real
+      </button>
+
       <div className="px-6 pt-4 pb-2 text-[10px] uppercase tracking-widest text-slate-500">
         /start-issue · {runs.length}
       </div>

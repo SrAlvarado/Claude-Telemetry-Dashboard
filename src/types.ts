@@ -73,8 +73,43 @@ export interface IssueRun {
   core: Core;
 }
 
+export interface PushEvent {
+  timestamp: string;
+  outcome: string; // pushed | pending | pass | fail | warning | merged | closed
+  detail: string;
+  branch: string;
+}
+
+export interface KeyVal {
+  key: string;
+  value: string;
+}
+
+export interface QaCheck {
+  id: string;
+  category: string;
+  status: string; // pass | warn | fail | skip
+  blocking: boolean;
+  details: string;
+}
+
+export interface QaReport {
+  pr: number;
+  branch: string;
+  status: string; // pass | warn | fail
+  generatedAt: string;
+  blockingFailures: number;
+  warnings: number;
+  checks: QaCheck[];
+  feedback: KeyVal[];
+  inScope: boolean | null;
+  scopeNotes: string;
+}
+
 export interface Metrics extends Core {
   runs: IssueRun[];
+  pushEvents: PushEvent[];
+  qaReports: QaReport[];
   generatedAt: string;
 }
 
@@ -98,5 +133,7 @@ export const EMPTY_METRICS: Metrics = {
   failures: [],
   flow: { nodes: [], edges: [] },
   runs: [],
+  pushEvents: [],
+  qaReports: [],
   generatedAt: "",
 };

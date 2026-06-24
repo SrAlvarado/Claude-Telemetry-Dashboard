@@ -73,6 +73,52 @@ pub struct Flow {
     pub edges: Vec<FlowEdge>,
 }
 
+/// A push/CI event from the orchestrator (.claude/telemetry/push-events.jsonl).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PushEvent {
+    pub timestamp: String,
+    /// pushed | pending | pass | fail | warning | merged | closed
+    pub outcome: String,
+    pub detail: String,
+    pub branch: String,
+}
+
+/// A key/value pair (QA feedback answers, order-preserving).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyVal {
+    pub key: String,
+    pub value: String,
+}
+
+/// One check inside a QA report.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct QaCheck {
+    pub id: String,
+    pub category: String,
+    pub status: String,
+    pub blocking: bool,
+    pub details: String,
+}
+
+/// A QA report emitted per PR by qa_report.py (.claude/qa-reports/pr-*.json).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct QaReport {
+    pub pr: i64,
+    pub branch: String,
+    pub status: String,
+    pub generated_at: String,
+    pub blocking_failures: u64,
+    pub warnings: u64,
+    pub checks: Vec<QaCheck>,
+    pub feedback: Vec<KeyVal>,
+    pub in_scope: Option<bool>,
+    pub scope_notes: String,
+}
+
 /// Everything the dashboard renders for a single scope (global or one run).
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +158,8 @@ pub struct Metrics {
     pub failures: Vec<Failure>,
     pub flow: Flow,
     pub runs: Vec<IssueRun>,
+    pub push_events: Vec<PushEvent>,
+    pub qa_reports: Vec<QaReport>,
     pub generated_at: String,
 }
 
@@ -126,6 +174,8 @@ impl Default for Metrics {
             failures: Vec::new(),
             flow: Flow::default(),
             runs: Vec::new(),
+            push_events: Vec::new(),
+            qa_reports: Vec::new(),
             generated_at: String::new(),
         }
     }

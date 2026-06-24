@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Sidebar, runKey } from "./components/Sidebar";
 import { CoreDashboard } from "./components/CoreDashboard";
 import { RunDetailView } from "./views/RunDetailView";
+import { QaView } from "./views/QaView";
+import { PushView } from "./views/PushView";
 import { useTelemetry } from "./hooks/useTelemetry";
 
 export default function App() {
@@ -19,6 +21,10 @@ export default function App() {
 
   const title = activeRun
     ? `Issue #${activeRun.issue || "?"}`
+    : selected === "qa"
+    ? "QA por issue"
+    : selected === "push"
+    ? "Push en tiempo real"
     : "Dashboard de Monitoreo";
 
   return (
@@ -50,6 +56,10 @@ export default function App() {
         <div className="px-8 py-6">
           {loading ? (
             <div className="text-slate-500 text-sm">Cargando telemetría…</div>
+          ) : selected === "qa" ? (
+            <QaView reports={metrics.qaReports} />
+          ) : selected === "push" ? (
+            <PushView events={metrics.pushEvents} />
           ) : activeRun ? (
             <RunDetailView run={activeRun} />
           ) : (
