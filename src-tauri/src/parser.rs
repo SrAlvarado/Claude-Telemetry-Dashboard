@@ -73,6 +73,95 @@ fn read_lines(path: &Path) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+// ── QA reports & push events (the two new dashboard sections) ────────────────
+
+fn str_field(v: &Value, key: &str) -> String {
+    v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_string()
+}
+
+/// Read .claude/telemetry/push-events.jsonl (single-line JSONL), newest first.
+fn collect_push_events(project_dir: &Path) -> Vec<PushEvent> {
+    let path = project_dir
+        .join(".claude")
+        .join("telemetry")
+        .join("push-events.jsonl");
+    let mut events: Vec<PushEvent> = read_lines(&path)
+        .iter()
+        .map(|v| PushEvent {
+            timestamp: str_field(v, "timestamp"),
+            outcome: str_field(v, "outcome"),
+            detail: str_field(v, "detail"),
+            branch: str_field(v, "branch"),
+        })
+        .collect();
+    events.reverse();
+    events
+}
+
+fn parse_qa_report(v: &Value) -> QaReport {
+    let summary = v.get("summary").cloned().unwrap_or_default();
+    let scope = v.get("scope").cloned().unwrap_or_default();
+    let feedback_obj = v.get("feedback").cloned().unwrap_or_default();
+    let feedback = ["platforms", "use_cases", "user_journey", "target_audience", "requirements"]
+        .iter()
+        .filter_map(|k| {
+            let value = feedback_obj.get(*k).and_then(|x| x.as_str()).unwrap_or("");
+            if value.is_empty() {
+                None
+            } else {
+                Some(KeyVal { key: (*k).to_string(), value: value.to_string() })
+            }
+        })
+        .collect();
+    let checks = v
+        .get("checks")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|c| QaCheck {
+                    id: str_field(c, "id"),
+                    category: str_field(c, "category"),
+                    status: str_field(c, "status"),
+                    blocking: c.get("blocking").and_then(|b| b.as_bool()).unwrap_or(false),
+                    details: str_field(c, "details"),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    QaReport {
+        pr: v.get("pr").and_then(|x| x.as_i64()).unwrap_or(0),
+        branch: str_field(v, "branch"),
+        status: str_field(v, "status"),
+        generated_at: str_field(v, "generated_at"),
+        blocking_failures: summary.get("blocking_failures").and_then(|x| x.as_u64()).unwrap_or(0),
+        warnings: summary.get("warnings").and_then(|x| x.as_u64()).unwrap_or(0),
+        checks,
+        feedback,
+        in_scope: scope.get("in_scope").and_then(|x| x.as_bool()),
+        scope_notes: str_field(&scope, "notes"),
+    }
+}
+
+/// Read .claude/qa-reports/pr-*.json (one JSON object per file), newest PR first.
+fn collect_qa_reports(project_dir: &Path) -> Vec<QaReport> {
+    let pattern = format!(
+        "{}/.claude/qa-reports/pr-*.json",
+        project_dir.to_string_lossy()
+    );
+    let mut reports: Vec<QaReport> = Vec::new();
+    if let Ok(paths) = glob::glob(&pattern) {
+        for path in paths.flatten() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(v) = serde_json::from_str::<Value>(&content) {
+                    reports.push(parse_qa_report(&v));
+                }
+            }
+        }
+    }
+    reports.sort_by(|a, b| b.pr.cmp(&a.pr));
+    reports
+}
+
 fn hour_bucket(ts: &str) -> String {
     if ts.len() >= 13 {
         format!("{} {}:00", &ts[0..10], &ts[11..13])
@@ -585,6 +674,8 @@ pub fn collect(project_dir: &Path) -> Metrics {
         failures: global.failures,
         flow: global.flow,
         runs,
+        push_events: collect_push_events(project_dir),
+        qa_reports: collect_qa_reports(project_dir),
         generated_at: Utc::now().to_rfc3339(),
     }
 }
