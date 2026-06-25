@@ -17,10 +17,16 @@ const MAX_FAILURES: usize = 80;
 
 // ── Path resolution ──────────────────────────────────────────────────────────
 
-/// Resolve the project root: the nearest ancestor containing `.claude/telemetry`.
+/// Resolve the project root: env var, then the persisted selection, then the
+/// nearest ancestor of CWD containing `.claude/telemetry`.
 pub fn resolve_project_dir() -> PathBuf {
     if let Ok(env) = std::env::var("CLAUDE_TELEMETRY_PROJECT") {
         return PathBuf::from(env);
+    }
+    // Persisted selection — survives GUI/Finder launches that don't inherit the
+    // shell env (a bare launch would otherwise resolve to the home dir).
+    if let Some(dir) = read_persisted_project_dir() {
+        return dir;
     }
     let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut dir = start.as_path();
@@ -34,6 +40,21 @@ pub fn resolve_project_dir() -> PathBuf {
         }
     }
     start
+}
+
+/// `<config-dir>/claude-telemetry-dashboard/config.json`
+/// (on macOS: `~/Library/Application Support/claude-telemetry-dashboard/config.json`).
+fn config_file_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("claude-telemetry-dashboard").join("config.json"))
+}
+
+/// Read the persisted `projectDir`, but only if it still points at a telemetry
+/// project (otherwise fall through to CWD resolution).
+fn read_persisted_project_dir() -> Option<PathBuf> {
+    let text = std::fs::read_to_string(config_file_path()?).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let dir = PathBuf::from(value.get("projectDir")?.as_str()?);
+    dir.join(".claude").join("telemetry").is_dir().then_some(dir)
 }
 
 fn encode_project_path(project_dir: &Path) -> String {
