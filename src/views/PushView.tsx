@@ -10,6 +10,32 @@ const OUTCOME: Record<string, { color: string; icon: string }> = {
   closed: { color: "text-slate-500", icon: "🚫" },
 };
 
+/** Ordered list of push/CI events (already filtered/ordered by the caller). */
+export function PushTimeline({ events }: { events: PushEvent[] }) {
+  return (
+    <ol className="space-y-2">
+      {events.map((e, i) => {
+        const o = OUTCOME[e.outcome] ?? { color: "text-slate-400", icon: "•" };
+        return (
+          <li
+            key={`${e.timestamp}-${i}`}
+            className="flex items-start gap-3 text-xs border-b border-navy-600/40 pb-2"
+          >
+            <span className={`${o.color} text-base leading-none`}>{o.icon}</span>
+            <div className="flex-1">
+              <div className={`font-mono ${o.color}`}>{e.outcome}</div>
+              {e.detail && <div className="text-slate-300">{e.detail}</div>}
+              <div className="text-[10px] text-slate-600 font-mono">
+                {e.branch} · {e.timestamp}
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function PushView({ events }: { events: PushEvent[] }) {
   if (events.length === 0) {
     return (
@@ -27,26 +53,7 @@ export function PushView({ events }: { events: PushEvent[] }) {
         <span className="h-2 w-2 rounded-full bg-neon-green animate-pulse" />
         Push en tiempo real · {events.length}
       </div>
-      <ol className="space-y-2">
-        {events.map((e, i) => {
-          const o = OUTCOME[e.outcome] ?? { color: "text-slate-400", icon: "•" };
-          return (
-            <li
-              key={`${e.timestamp}-${i}`}
-              className="flex items-start gap-3 text-xs border-b border-navy-600/40 pb-2"
-            >
-              <span className={`${o.color} text-base leading-none`}>{o.icon}</span>
-              <div className="flex-1">
-                <div className={`font-mono ${o.color}`}>{e.outcome}</div>
-                {e.detail && <div className="text-slate-300">{e.detail}</div>}
-                <div className="text-[10px] text-slate-600 font-mono">
-                  {e.branch} · {e.timestamp}
-                </div>
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+      <PushTimeline events={events} />
     </div>
   );
 }

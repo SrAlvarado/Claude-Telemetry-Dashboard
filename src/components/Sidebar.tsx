@@ -1,8 +1,10 @@
-import type { IssueRun } from "../types";
+import type { GithubStates, IssueRun } from "../types";
+import { issueStatus, STATUS_DOT, STATUS_LABEL } from "../lib/issueStatus";
 
 interface Props {
   runs: IssueRun[];
-  selected: string; // "global" or a run key
+  github: GithubStates;
+  selected: string; // "global" | "issues" | "reino" | a run key
   onSelect: (v: string) => void;
 }
 
@@ -10,7 +12,29 @@ const runKey = (r: IssueRun, i: number) => `${r.issue}-${r.startedAt}-${i}`;
 const fmtDate = (ts: string) =>
   ts.length >= 16 ? ts.slice(0, 16).replace("T", " ") : ts;
 
-export function Sidebar({ runs, selected, onSelect }: Props) {
+interface NavButtonProps {
+  active: boolean;
+  icon: string;
+  label: string;
+  onClick: () => void;
+}
+
+function NavButton({ active, icon, label, onClick }: NavButtonProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
+        active
+          ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
+          : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
+      }`}
+    >
+      <span className="text-base">{icon}</span> {label}
+    </button>
+  );
+}
+
+export function Sidebar({ runs, github, selected, onSelect }: Props) {
   return (
     <aside className="w-64 shrink-0 border-r border-neon-teal/15 bg-navy-800/80 flex flex-col">
       <div className="px-6 py-6 flex items-center gap-3 border-b border-neon-teal/10">
@@ -25,38 +49,24 @@ export function Sidebar({ runs, selected, onSelect }: Props) {
         </div>
       </div>
 
-      <button
+      <NavButton
+        active={selected === "global"}
+        icon="📊"
+        label="Dashboard global"
         onClick={() => onSelect("global")}
-        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
-          selected === "global"
-            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
-            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
-        }`}
-      >
-        <span className="text-base">📊</span> Dashboard global
-      </button>
-
-      <button
-        onClick={() => onSelect("qa")}
-        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
-          selected === "qa"
-            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
-            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
-        }`}
-      >
-        <span className="text-base">🧪</span> QA por issue
-      </button>
-
-      <button
-        onClick={() => onSelect("push")}
-        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
-          selected === "push"
-            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
-            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
-        }`}
-      >
-        <span className="text-base">🚀</span> Push en tiempo real
-      </button>
+      />
+      <NavButton
+        active={selected === "issues"}
+        icon="🗂️"
+        label="Issues"
+        onClick={() => onSelect("issues")}
+      />
+      <NavButton
+        active={selected === "reino"}
+        icon="🏰"
+        label="Reino"
+        onClick={() => onSelect("reino")}
+      />
 
       <div className="px-6 pt-4 pb-2 text-[10px] uppercase tracking-widest text-slate-500">
         /start-issue · {runs.length}
@@ -71,7 +81,7 @@ export function Sidebar({ runs, selected, onSelect }: Props) {
         {runs.map((r, i) => {
           const key = runKey(r, i);
           const isActive = selected === key;
-          const fail = r.core.summary.commandsFailed > 0;
+          const status = issueStatus(r, github);
           return (
             <button
               key={key}
@@ -91,9 +101,8 @@ export function Sidebar({ runs, selected, onSelect }: Props) {
                   #{r.issue || "?"}
                 </span>
                 <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    fail ? "bg-neon-red" : "bg-neon-green"
-                  }`}
+                  title={STATUS_LABEL[status]}
+                  className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`}
                 />
               </div>
               <div className="text-[10px] text-slate-500 truncate" title={r.branch}>

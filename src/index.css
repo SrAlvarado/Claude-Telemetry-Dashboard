@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -54,4 +54,169 @@ body {
 /* React Flow dark overrides */
 .react-flow__attribution {
   display: none;
+}
+
+/* ── Reino (pixel-art kingdom) ───────────────────────────────────────────── */
+.font-pixel {
+  font-family: "Press Start 2P", monospace;
+}
+.pixel {
+  image-rendering: pixelated;
+  display: grid;
+}
+
+.reino-grass {
+  background:
+    radial-gradient(180px 120px at 50% 20%, #16351f, transparent),
+    repeating-linear-gradient(0deg, #0c2417, #0c2417 36px, #0e2a1b 36px, #0e2a1b 72px),
+    repeating-linear-gradient(90deg, transparent, transparent 36px, rgba(255, 255, 255, 0.04) 36px, rgba(255, 255, 255, 0.04) 72px);
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.6);
+}
+
+.reino-wall {
+  background: repeating-linear-gradient(90deg, #241a55, #241a55 46px, #2a2061 46px, #2a2061 92px);
+  box-shadow: inset 0 -30px 50px rgba(0, 0, 0, 0.33);
+}
+.reino-floor {
+  background: repeating-linear-gradient(90deg, #3a2d52, #3a2d52 34px, #46385f 34px, #46385f 68px);
+  transform: perspective(420px) rotateX(52deg);
+  transform-origin: bottom;
+  opacity: 0.92;
+}
+.reino-carpet {
+  background: linear-gradient(180deg, #b91c1c, #7f1313);
+  transform: translateX(-50%) perspective(420px) rotateX(52deg);
+  transform-origin: bottom;
+  box-shadow: 0 0 30px rgba(239, 68, 68, 0.33);
+}
+.reino-throne {
+  background: linear-gradient(180deg, #7c3aed, #4c1d95);
+  border: 4px solid #f7c948;
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 0 30px rgba(124, 58, 237, 0.47);
+}
+.reino-bubble {
+  background: #eaf0ff;
+  color: #0a0e27;
+  box-shadow: 0 6px 0 #b9c4e6;
+  animation: reino-pop 0.5s ease-out both;
+}
+.reino-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 7px solid transparent;
+  border-top-color: #eaf0ff;
+}
+
+.anim-breathe {
+  animation: reino-breathe 3.4s ease-in-out infinite;
+}
+.anim-float {
+  animation: reino-float 2.6s ease-in-out infinite;
+}
+.anim-bob {
+  animation: reino-bob 3s ease-in-out infinite;
+}
+@keyframes reino-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.04); }
+}
+@keyframes reino-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+@keyframes reino-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes reino-pop {
+  0% { transform: translateX(-50%) scale(0.4); opacity: 0; }
+  70% { transform: translateX(-50%) scale(1.08); }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+/* Zona clicable en la sala del trono */
+.reino-zone {
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s, transform 0.15s;
+}
+.reino-zone:hover {
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-3px);
+}
+
+/* Pantallas temáticas por rol (al entrar en una zona) */
+.reino-screen {
+  position: relative;
+  height: 440px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 2px solid rgba(45, 212, 191, 0.18);
+}
+.reino-screen-floor {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 32%;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+/* 🔨 Obras */
+.reino-zone-worker {
+  background:
+    repeating-linear-gradient(45deg, #2a210b, #2a210b 18px, #332810 18px, #332810 36px),
+    linear-gradient(180deg, #1c1605, #0d0a02);
+}
+/* 🧪 Laboratorio */
+.reino-zone-brain {
+  background:
+    radial-gradient(120px 90px at 30% 60%, #0c3a2a, transparent),
+    radial-gradient(140px 100px at 70% 40%, #0a3030, transparent),
+    linear-gradient(180deg, #07241b, #03110d);
+}
+/* 🛡️ Guardia */
+.reino-zone-guardian {
+  background:
+    repeating-linear-gradient(90deg, #14213f, #14213f 44px, #1a2a4e 44px, #1a2a4e 88px),
+    linear-gradient(180deg, #0d1733, #060c1e);
+}
+/* 📜 Biblioteca */
+.reino-zone-guide {
+  background:
+    repeating-linear-gradient(90deg, #251a3d, #251a3d 26px, #2f2150 26px, #2f2150 52px),
+    linear-gradient(180deg, #1a1230, #0c0820);
+}
+/* 🔭 Mirador */
+.reino-zone-scout {
+  background:
+    radial-gradient(2px 2px at 20% 25%, #ffffffcc, transparent),
+    radial-gradient(2px 2px at 60% 15%, #ffffff99, transparent),
+    radial-gradient(2px 2px at 80% 35%, #ffffffcc, transparent),
+    radial-gradient(2px 2px at 40% 20%, #ffffff77, transparent),
+    linear-gradient(180deg, #06243a, #041523 70%, #07101c);
+}
+.reino-prop {
+  position: absolute;
+  opacity: 0.85;
+}
+.reino-worker-bubble {
+  background: #eaf0ff;
+  color: #0a0e27;
+  box-shadow: 0 4px 0 #b9c4e6;
+  position: relative;
+  animation: reino-pop 0.5s ease-out both;
+}
+.reino-worker-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #eaf0ff;
 }
