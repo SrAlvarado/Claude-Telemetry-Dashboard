@@ -584,9 +584,11 @@ fn build_core(
 
 // ── Kingdom (gamified "Reino" view) ─────────────────────────────────────────
 
-/// Map a subagent to a themed role based on its type and description.
-fn role_for(subagent_type: &str, description: &str) -> &'static str {
-    let s = format!("{} {}", subagent_type, description).to_lowercase();
+/// Map a subagent (or skill) to a themed role based on its TYPE/name only.
+/// La descripción NO se usa: en flujos TDD casi todo menciona "test", lo que
+/// clasificaba erróneamente a casi todos los súbditos como cerebritos.
+fn role_for(subagent_type: &str) -> &'static str {
+    let s = subagent_type.to_lowercase();
     if s.contains("review") || s.contains("qa") || s.contains("security") || s.contains("audit") {
         "guardian"
     } else if s.contains("test") || s.contains("mutation") {
@@ -727,7 +729,7 @@ fn build_kingdom(records: &[Value], scope: &dyn Fn(&Value) -> bool) -> Kingdom {
                             subjects.push((
                                 ts.clone(),
                                 Subject {
-                                    role: role_for(&subagent_type, &label).to_string(),
+                                    role: role_for(&subagent_type).to_string(),
                                     label: truncate(&label, 60),
                                     subagent_type,
                                 },
@@ -749,7 +751,7 @@ fn build_kingdom(records: &[Value], scope: &dyn Fn(&Value) -> bool) -> Kingdom {
                             subjects.push((
                                 ts.clone(),
                                 Subject {
-                                    role: role_for(skill, "").to_string(),
+                                    role: role_for(skill).to_string(),
                                     label: format!("/{}", skill),
                                     subagent_type: format!("skill:{}", skill),
                                 },
