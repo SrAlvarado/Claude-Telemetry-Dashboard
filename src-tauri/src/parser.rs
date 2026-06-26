@@ -792,6 +792,32 @@ struct RawRun {
     session_id: String,
 }
 
+/// Substring entre dos marcadores (no incluidos), o None.
+fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = s.find(open)? + open.len();
+    let rest = &s[start..];
+    let end = rest.find(close)?;
+    Some(&rest[..end])
+}
+
+/// Args de un slash-command tecleado que arranca un run (`/implement`,
+/// `/start-issue`): `<command-name>/implement</command-name>
+/// <command-args>1457</command-args>`. None si no es un arranque de run.
+fn slash_run_args(text: &str) -> Option<String> {
+    let name = between(text, "<command-name>", "</command-name>")?
+        .trim()
+        .trim_start_matches('/');
+    if name != "implement" && name != "start-issue" {
+        return None;
+    }
+    Some(
+        between(text, "<command-args>", "</command-args>")
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+    )
+}
+
 pub fn collect(project_dir: &Path) -> Metrics {
     // Load all records and events once.
     let mut records: Vec<Value> = Vec::new();
@@ -869,6 +895,32 @@ pub fn collect(project_dir: &Path) -> Metrics {
                                     });
                                 }
                             }
+                        }
+                    } else if kind == "user" {
+                        // Slash-command tecleado por el usuario (no es un tool_use
+                        // "Skill" pero también arranca un run):
+                        // <command-name>/implement</command-name><command-args>N</command-args>
+                        let text = obj
+                            .get("message")
+                            .and_then(|m| m.get("content"))
+                            .map(text_from_content)
+                            .unwrap_or_default();
+                        if let Some(args) = slash_run_args(&text) {
+                            raw_runs.push(RawRun {
+                                issue: args
+                                    .split_whitespace()
+                                    .next()
+                                    .unwrap_or("")
+                                    .to_string(),
+                                args,
+                                branch: branch.clone(),
+                                started_at: obj
+                                    .get("timestamp")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                session_id: sid.clone(),
+                            });
                         }
                     }
                     records.push(obj);
