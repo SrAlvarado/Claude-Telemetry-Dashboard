@@ -24,11 +24,14 @@ export function runPr(run: IssueRun, gh: GithubStates): GithubPrState | null {
  *   - "unknown" → GitHub state unavailable for this run (shown muted)
  */
 export function issueStatus(run: IssueRun, gh: GithubStates): IssueStatus {
+  // El número de issue es la identidad autoritativa del run. La PR se empareja
+  // por rama, lo cual falla cuando varios runs comparten una rama de sesión
+  // (p.ej. harness/e6-bot-triage, que tuvo una PR mergeada) — marcaría como
+  // "done" issues abiertas. Por eso la issue MANDA sobre la PR.
   const issue = gh.issues.find((i) => i.number === run.issue);
-  const pr = runPr(run, gh);
-  if (pr && (pr.state === "MERGED" || pr.state === "CLOSED")) return "done";
   if (issue) return issue.state === "CLOSED" ? "done" : "active";
-  if (pr) return pr.state === "OPEN" ? "active" : "done";
+  const pr = runPr(run, gh);
+  if (pr) return pr.state === "MERGED" || pr.state === "CLOSED" ? "done" : "active";
   return "unknown";
 }
 
