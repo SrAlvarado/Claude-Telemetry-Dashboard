@@ -997,6 +997,20 @@ pub fn collect(project_dir: &Path) -> Metrics {
         window_end.insert(i, end);
     }
 
+    // Pre-agrupar records por sesión (solo las que tienen runs) para que cada run
+    // procese SOLO los suyos, no los ~95K totales agregados de todos los worktrees.
+    // Evita el coste O(runs × records) que ralentizaba collect() en cada tick del
+    // watcher.
+    let run_sessions: HashSet<&str> = raw_runs.iter().map(|r| r.session_id.as_str()).collect();
+    let mut by_session: HashMap<String, Vec<Value>> = HashMap::new();
+    for obj in &records {
+        if let Some(sid) = obj.get("sessionId").and_then(|s| s.as_str()) {
+            if run_sessions.contains(sid) {
+                by_session.entry(sid.to_string()).or_default().push(obj.clone());
+            }
+        }
+    }
+
     // Per-run dashboards. Recorremos en orden (sesión, inicio) y deduplicamos por
     // key conservando el arranque más temprano (que ya tiene la ventana completa).
     let mut runs: Vec<IssueRun> = Vec::new();
@@ -1025,8 +1039,13 @@ pub fn collect(project_dir: &Path) -> Metrics {
                 None => true,
             }
         };
-        let core = build_core(&records, &events, &scope, true, Some(&branch), &branch_pr, pr_total);
-        let kingdom = build_kingdom(&records, &scope);
+        // Solo los records de la sesión de este run (no los ~95K globales).
+        let sess_records: &[Value] = by_session
+            .get(&session_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let core = build_core(sess_records, &events, &scope, true, Some(&branch), &branch_pr, pr_total);
+        let kingdom = build_kingdom(sess_records, &scope);
         runs.push(IssueRun {
             issue: r.issue.clone(),
             args: r.args.clone(),
