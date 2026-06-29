@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { GithubStates, IssueRun, Subject, SubjectRole } from "../types";
 import { issueStatus } from "../lib/issueStatus";
 import { Pixel, type SpriteName } from "../lib/pixelSprites";
@@ -223,7 +223,10 @@ function ZoneScreen({ run, role, onBack }: { run: IssueRun; role: SubjectRole; o
 // ── Vista raíz ────────────────────────────────────────────────────────────────
 
 export function ReinoView({ runs, github }: { runs: IssueRun[]; github: GithubStates }) {
-  const active = runs.filter((r) => issueStatus(r, github) === "active");
+  const active = useMemo(
+    () => runs.filter((r) => issueStatus(r, github) === "active"),
+    [runs, github]
+  );
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [openZone, setOpenZone] = useState<SubjectRole | null>(null);
   const openRun = openKey ? active.find((r) => keyOf(r) === openKey) ?? null : null;

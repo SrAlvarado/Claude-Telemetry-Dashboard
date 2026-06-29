@@ -4,8 +4,25 @@
 use crate::parser;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+
+// El watcher se dispara en cada escritura del transcript (muy frecuente con una
+// sesión activa). 800ms re-parseaba el historial casi en bucle y trababa la UI;
+// 1500ms reduce los re-parseos sin que el dashboard se sienta retrasado.
+const DEBOUNCE_MS: u64 = 1500;
+
+/// Firma estable de unas métricas, ignorando `generatedAt` (que cambia en cada
+/// `collect()` aunque el contenido sea idéntico). Sirve para no re-emitir —y por
+/// tanto no re-renderizar el frontend— cuando el fichero cambió pero los datos no.
+fn signature(metrics: &crate::model::Metrics) -> Option<String> {
+    let mut value = serde_json::to_value(metrics).ok()?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("generatedAt");
+    }
+    serde_json::to_string(&value).ok()
+}
 
 pub fn spawn(app: AppHandle) {
     std::thread::spawn(move || {
@@ -14,12 +31,22 @@ pub fn spawn(app: AppHandle) {
         let transcripts = transcript_watch_dir(&project_dir);
 
         let app_for_cb = app.clone();
+        let last_signature: Mutex<Option<String>> = Mutex::new(None);
         let mut debouncer = match new_debouncer(
-            Duration::from_millis(800),
+            Duration::from_millis(DEBOUNCE_MS),
             move |res: Result<Vec<_>, _>| {
                 if res.is_ok() {
                     let project_dir = parser::resolve_project_dir();
                     let metrics = parser::collect(&project_dir);
+                    // Dedup: si las métricas son idénticas a la última emisión,
+                    // no emitimos (evita un re-render del árbol completo en balde).
+                    let sig = signature(&metrics);
+                    let mut last = last_signature.lock().unwrap();
+                    if sig.is_some() && *last == sig {
+                        return;
+                    }
+                    *last = sig;
+                    drop(last);
                     let _ = app_for_cb.emit("telemetry-updated", metrics);
                 }
             },

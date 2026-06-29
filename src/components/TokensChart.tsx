@@ -1,11 +1,13 @@
+import { memo, useMemo } from "react";
 import ReactECharts from "echarts-for-react";
 import type { TokenPoint } from "../types";
 
 const fmtTs = (ts: string) => (ts.length >= 16 ? ts.slice(5, 16) : ts);
 
-export function TokensChart({ data }: { data: TokenPoint[] }) {
-  const labels = data.map((d) => fmtTs(d.ts));
-  const option = {
+function TokensChartImpl({ data }: { data: TokenPoint[] }) {
+  const option = useMemo(() => {
+    const labels = data.map((d) => fmtTs(d.ts));
+    return {
     backgroundColor: "transparent",
     grid: { left: 50, right: 20, top: 40, bottom: 40 },
     tooltip: { trigger: "axis", backgroundColor: "#0f1535", borderColor: "#2dd4bf" },
@@ -45,6 +47,9 @@ export function TokensChart({ data }: { data: TokenPoint[] }) {
         areaStyle: { color: "rgba(45,212,191,0.12)" },
       },
     ],
-  };
+    };
+  }, [data]);
   return <ReactECharts option={option} style={{ height: 280 }} notMerge />;
 }
+
+export const TokensChart = memo(TokensChartImpl);
