@@ -92,14 +92,18 @@ pub struct KeyVal {
     pub value: String,
 }
 
-/// One check inside a QA report.
+/// One check inside a QA report. Carries every field the gate emits so the UI
+/// can render the full report rather than a truncated view.
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct QaCheck {
     pub id: String,
     pub category: String,
+    pub tool: String,
     pub status: String,
     pub blocking: bool,
+    pub score: Option<f64>,
+    pub threshold: Option<f64>,
     pub details: String,
 }
 
@@ -108,15 +112,71 @@ pub struct QaCheck {
 #[serde(rename_all = "camelCase")]
 pub struct QaReport {
     pub pr: i64,
+    pub issue: String,
     pub branch: String,
     pub status: String,
+    pub schema_version: String,
     pub generated_at: String,
     pub blocking_failures: u64,
     pub warnings: u64,
+    pub total_checks: u64,
     pub checks: Vec<QaCheck>,
     pub feedback: Vec<KeyVal>,
     pub in_scope: Option<bool>,
     pub scope_notes: String,
+}
+
+// ── GitHub-backed status (resolved via the `gh` CLI) ─────────────────────────
+
+/// State of one issue on GitHub (OPEN | CLOSED).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubIssueState {
+    pub number: String,
+    pub state: String,
+    pub title: String,
+}
+
+/// State of one pull request on GitHub (OPEN | CLOSED | MERGED).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrState {
+    pub number: i64,
+    pub state: String,
+    pub head_ref_name: String,
+    pub title: String,
+    pub url: String,
+}
+
+/// Authoritative open/closed state pulled from GitHub for the resolved repo.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubStates {
+    pub repo: String,
+    pub issues: Vec<GithubIssueState>,
+    pub prs: Vec<GithubPrState>,
+}
+
+/// One CI / status check on a pull request.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrCheck {
+    pub name: String,
+    pub status: String,
+    pub conclusion: String,
+}
+
+/// Live detail of a pull request (title, state, CI checks, review decision).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrDetail {
+    pub number: i64,
+    pub title: String,
+    pub state: String,
+    pub url: String,
+    pub body: String,
+    pub review_decision: String,
+    pub checks: Vec<PrCheck>,
 }
 
 /// Everything the dashboard renders for a single scope (global or one run).
@@ -132,6 +192,31 @@ pub struct Core {
     pub flow: Flow,
 }
 
+/// A subject of the kingdom — a subagent spawned within a run, themed by role.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Subject {
+    /// guardian | brain | scout | guide | worker
+    pub role: String,
+    /// Human label (the subagent's description).
+    pub label: String,
+    /// Raw subagent_type from the Agent tool.
+    pub subagent_type: String,
+}
+
+/// The gamified view of a run: the PR agent as king, its subagents as subjects.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Kingdom {
+    /// Short phrase (≤10 words) describing the latest activity in the run.
+    pub activity: String,
+    /// Subagents spawned within the run, newest first.
+    pub subjects: Vec<Subject>,
+    /// True hasta que el run hace trabajo real (picar código o lanzar un
+    /// subagente): el castillo aparece "en obras" hasta entonces.
+    pub building: bool,
+}
+
 /// A single /start-issue execution, with its own full dashboard (`core`).
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -145,6 +230,7 @@ pub struct IssueRun {
     pub session_id: String,
     pub pr_url: String,
     pub core: Core,
+    pub kingdom: Kingdom,
 }
 
 #[derive(Serialize, Clone)]

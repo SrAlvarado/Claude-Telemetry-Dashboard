@@ -63,6 +63,20 @@ export interface Core {
   flow: Flow;
 }
 
+export type SubjectRole = "guardian" | "brain" | "scout" | "guide" | "worker";
+
+export interface Subject {
+  role: SubjectRole;
+  label: string;
+  subagentType: string;
+}
+
+export interface Kingdom {
+  activity: string;
+  subjects: Subject[];
+  building: boolean;
+}
+
 export interface IssueRun {
   issue: string;
   args: string;
@@ -71,6 +85,7 @@ export interface IssueRun {
   sessionId: string;
   prUrl: string;
   core: Core;
+  kingdom: Kingdom;
 }
 
 export interface PushEvent {
@@ -88,22 +103,72 @@ export interface KeyVal {
 export interface QaCheck {
   id: string;
   category: string;
+  tool: string;
   status: string; // pass | warn | fail | skip
   blocking: boolean;
+  score: number | null;
+  threshold: number | null;
   details: string;
 }
 
 export interface QaReport {
   pr: number;
+  issue: string;
   branch: string;
   status: string; // pass | warn | fail
+  schemaVersion: string;
   generatedAt: string;
   blockingFailures: number;
   warnings: number;
+  totalChecks: number;
   checks: QaCheck[];
   feedback: KeyVal[];
   inScope: boolean | null;
   scopeNotes: string;
+}
+
+// ── GitHub-backed status (resolved via the `gh` CLI) ─────────────────────────
+
+export interface GithubIssueState {
+  number: string;
+  state: string; // OPEN | CLOSED
+  title: string;
+}
+
+export interface GithubPrState {
+  number: number;
+  state: string; // OPEN | CLOSED | MERGED
+  headRefName: string;
+  title: string;
+  url: string;
+}
+
+export interface GithubStates {
+  repo: string;
+  issues: GithubIssueState[];
+  prs: GithubPrState[];
+}
+
+export const EMPTY_GITHUB_STATES: GithubStates = {
+  repo: "",
+  issues: [],
+  prs: [],
+};
+
+export interface PrCheck {
+  name: string;
+  status: string;
+  conclusion: string;
+}
+
+export interface PrDetail {
+  number: number;
+  title: string;
+  state: string; // OPEN | CLOSED | MERGED
+  url: string;
+  body: string;
+  reviewDecision: string;
+  checks: PrCheck[];
 }
 
 export interface Metrics extends Core {

@@ -1,8 +1,15 @@
-import type { IssueRun } from "../types";
+import type { GithubStates, IssueRun } from "../types";
+import {
+  issueStatus,
+  type IssueStatus,
+  STATUS_DOT,
+  STATUS_LABEL,
+} from "../lib/issueStatus";
 
 interface Props {
   runs: IssueRun[];
-  selected: string; // "global" or a run key
+  github: GithubStates;
+  selected: string; // "global" | "issues" | "reino" | a run key
   onSelect: (v: string) => void;
 }
 
@@ -10,7 +17,80 @@ const runKey = (r: IssueRun, i: number) => `${r.issue}-${r.startedAt}-${i}`;
 const fmtDate = (ts: string) =>
   ts.length >= 16 ? ts.slice(0, 16).replace("T", " ") : ts;
 
-export function Sidebar({ runs, selected, onSelect }: Props) {
+interface NavButtonProps {
+  active: boolean;
+  icon: string;
+  label: string;
+  onClick: () => void;
+}
+
+function NavButton({ active, icon, label, onClick }: NavButtonProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
+        active
+          ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
+          : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
+      }`}
+    >
+      <span className="text-base">{icon}</span> {label}
+    </button>
+  );
+}
+
+interface RunRowProps {
+  run: IssueRun;
+  selected: boolean;
+  status: IssueStatus;
+  onSelect: () => void;
+}
+
+function RunRow({ run, selected, status, onSelect }: RunRowProps) {
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full text-left px-6 py-2.5 transition-colors border-l-2 ${
+        selected
+          ? "bg-neon-cyan/10 border-neon-cyan"
+          : "border-transparent hover:bg-navy-700/60"
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <span
+          className={`font-display text-sm ${
+            selected ? "text-neon-cyan" : "text-slate-200"
+          }`}
+        >
+          #{run.issue || "?"}
+        </span>
+        <span
+          title={STATUS_LABEL[status]}
+          className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`}
+        />
+      </div>
+      <div className="text-[10px] text-slate-500 truncate" title={run.branch}>
+        {run.branch || "—"}
+      </div>
+      <div className="text-[10px] text-slate-600">{fmtDate(run.startedAt)}</div>
+    </button>
+  );
+}
+
+const SECTION_HEADER =
+  "px-6 pt-3 pb-1 text-[10px] uppercase tracking-widest text-slate-500";
+
+export function Sidebar({ runs, github, selected, onSelect }: Props) {
+  // Un run por fila, anotado con su clave estable y estado, partido en activas
+  // (en curso / sin estado GitHub) y mergeadas (issue cerrada o PR mergeada).
+  const annotated = runs.map((run, i) => ({
+    run,
+    key: runKey(run, i),
+    status: issueStatus(run, github),
+  }));
+  const doneRuns = annotated.filter((r) => r.status === "done");
+  const activeRuns = annotated.filter((r) => r.status !== "done");
+
   return (
     <aside className="w-64 shrink-0 border-r border-neon-teal/15 bg-navy-800/80 flex flex-col">
       <div className="px-6 py-6 flex items-center gap-3 border-b border-neon-teal/10">
@@ -25,38 +105,24 @@ export function Sidebar({ runs, selected, onSelect }: Props) {
         </div>
       </div>
 
-      <button
+      <NavButton
+        active={selected === "global"}
+        icon="📊"
+        label="Dashboard global"
         onClick={() => onSelect("global")}
-        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
-          selected === "global"
-            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
-            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
-        }`}
-      >
-        <span className="text-base">📊</span> Dashboard global
-      </button>
-
-      <button
-        onClick={() => onSelect("qa")}
-        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
-          selected === "qa"
-            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
-            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
-        }`}
-      >
-        <span className="text-base">🧪</span> QA por issue
-      </button>
-
-      <button
-        onClick={() => onSelect("push")}
-        className={`flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
-          selected === "push"
-            ? "bg-neon-teal/10 text-neon-teal border-l-2 border-neon-teal"
-            : "text-slate-300 hover:text-slate-100 border-l-2 border-transparent"
-        }`}
-      >
-        <span className="text-base">🚀</span> Push en tiempo real
-      </button>
+      />
+      <NavButton
+        active={selected === "issues"}
+        icon="🗂️"
+        label="Issues"
+        onClick={() => onSelect("issues")}
+      />
+      <NavButton
+        active={selected === "reino"}
+        icon="🏰"
+        label="Reino"
+        onClick={() => onSelect("reino")}
+      />
 
       <div className="px-6 pt-4 pb-2 text-[10px] uppercase tracking-widest text-slate-500">
         /start-issue · {runs.length}
@@ -68,41 +134,27 @@ export function Sidebar({ runs, selected, onSelect }: Props) {
             No se han detectado ejecuciones de /start-issue todavía.
           </div>
         )}
-        {runs.map((r, i) => {
-          const key = runKey(r, i);
-          const isActive = selected === key;
-          const fail = r.core.summary.commandsFailed > 0;
-          return (
-            <button
-              key={key}
-              onClick={() => onSelect(key)}
-              className={`w-full text-left px-6 py-2.5 transition-colors border-l-2 ${
-                isActive
-                  ? "bg-neon-cyan/10 border-neon-cyan"
-                  : "border-transparent hover:bg-navy-700/60"
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span
-                  className={`font-display text-sm ${
-                    isActive ? "text-neon-cyan" : "text-slate-200"
-                  }`}
-                >
-                  #{r.issue || "?"}
-                </span>
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    fail ? "bg-neon-red" : "bg-neon-green"
-                  }`}
+        {([
+          ["Activas", activeRuns],
+          ["Mergeadas", doneRuns],
+        ] as const).map(([title, group]) =>
+          group.length === 0 ? null : (
+            <div key={title}>
+              <div className={SECTION_HEADER}>
+                {title} · {group.length}
+              </div>
+              {group.map(({ run, key, status }) => (
+                <RunRow
+                  key={key}
+                  run={run}
+                  status={status}
+                  selected={selected === key}
+                  onSelect={() => onSelect(key)}
                 />
-              </div>
-              <div className="text-[10px] text-slate-500 truncate" title={r.branch}>
-                {r.branch || "—"}
-              </div>
-              <div className="text-[10px] text-slate-600">{fmtDate(r.startedAt)}</div>
-            </button>
-          );
-        })}
+              ))}
+            </div>
+          )
+        )}
       </nav>
 
       <div className="px-6 py-4 border-t border-neon-teal/10 text-[11px] text-slate-500">

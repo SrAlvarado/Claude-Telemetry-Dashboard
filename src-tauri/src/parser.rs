@@ -74,6 +74,48 @@ fn transcript_dir(project_dir: &Path) -> Option<PathBuf> {
     )
 }
 
+/// Real paths of every git worktree of the repo at `project_dir` (incluye el
+/// principal). Permite recoger los transcripts de las sesiones de Claude que
+/// corren dentro de worktrees — donde sucede el trabajo real de /implement.
+fn git_worktree_paths(project_dir: &Path) -> Vec<PathBuf> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_dir)
+        .args(["worktree", "list", "--porcelain"])
+        .output();
+    let mut paths = Vec::new();
+    if let Ok(out) = out {
+        if out.status.success() {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if let Some(p) = line.strip_prefix("worktree ") {
+                    paths.push(PathBuf::from(p.trim()));
+                }
+            }
+        }
+    }
+    paths
+}
+
+/// Every transcript dir to scan: the main project plus each of its git
+/// worktrees (each lives at a different path → a different encoded dir). This
+/// is what makes /implement runs driven inside worktrees show up in the Reino,
+/// con sus súbditos reales. Worktrees of *other* repos (p.ej. el dashboard) no
+/// aparecen porque `git worktree list` solo lista los de ESTE repo.
+fn transcript_dirs(project_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(main) = transcript_dir(project_dir) {
+        dirs.push(main);
+    }
+    for wt in git_worktree_paths(project_dir) {
+        if let Some(d) = transcript_dir(&wt) {
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    }
+    dirs
+}
+
 // ── Small helpers ──────────────────────────────────────────────────────────
 
 fn read_lines(path: &Path) -> Vec<Value> {
@@ -142,8 +184,11 @@ fn parse_qa_report(v: &Value) -> QaReport {
                 .map(|c| QaCheck {
                     id: str_field(c, "id"),
                     category: str_field(c, "category"),
+                    tool: str_field(c, "tool"),
                     status: str_field(c, "status"),
                     blocking: c.get("blocking").and_then(|b| b.as_bool()).unwrap_or(false),
+                    score: c.get("score").and_then(|x| x.as_f64()),
+                    threshold: c.get("threshold").and_then(|x| x.as_f64()),
                     details: str_field(c, "details"),
                 })
                 .collect()
@@ -151,11 +196,14 @@ fn parse_qa_report(v: &Value) -> QaReport {
         .unwrap_or_default();
     QaReport {
         pr: v.get("pr").and_then(|x| x.as_i64()).unwrap_or(0),
+        issue: str_field(v, "issue"),
         branch: str_field(v, "branch"),
         status: str_field(v, "status"),
+        schema_version: str_field(v, "schema_version"),
         generated_at: str_field(v, "generated_at"),
         blocking_failures: summary.get("blocking_failures").and_then(|x| x.as_u64()).unwrap_or(0),
         warnings: summary.get("warnings").and_then(|x| x.as_u64()).unwrap_or(0),
+        total_checks: summary.get("total_checks").and_then(|x| x.as_u64()).unwrap_or(0),
         checks,
         feedback,
         in_scope: scope.get("in_scope").and_then(|x| x.as_bool()),
@@ -283,20 +331,22 @@ fn record_branch(obj: &Value) -> String {
         .to_string()
 }
 
-// ── Core builder (optionally scoped to one branch) ─────────────────────────
+// ── Core builder (scoped by an arbitrary record predicate) ─────────────────
 
-/// Build the full metric set, optionally restricted to records on `filter`
-/// branch. `branch_pr` maps branch -> PR url; `pr_total` is the global distinct
-/// PR count used when `filter` is None.
+/// Build the full metric set, restricted to records for which `scope` returns
+/// true (use `|_| true` for the global view). `is_run` marks a per-run view
+/// (forces the run-start flow node and uses `run_branch` for the PR count);
+/// `branch_pr` maps branch -> PR url; `pr_total` is the global PR count.
 fn build_core(
     records: &[Value],
     events: &[Value],
-    filter: Option<&str>,
+    scope: &dyn Fn(&Value) -> bool,
+    is_run: bool,
+    run_branch: Option<&str>,
     branch_pr: &HashMap<String, String>,
     pr_total: u64,
 ) -> Core {
     let mut core = Core::default();
-    let matches = |branch: &str| -> bool { filter.map_or(true, |f| f == branch) };
 
     let mut prompt_counter = Counter::new();
     let mut command_counter = Counter::new();
@@ -308,13 +358,12 @@ fn build_core(
     let mut benign_failures: u64 = 0;
 
     for obj in records {
-        let branch = record_branch(obj);
         let ts = obj
             .get("timestamp")
             .and_then(|t| t.as_str())
             .unwrap_or("")
             .to_string();
-        let in_scope = matches(&branch);
+        let in_scope = scope(obj);
         if in_scope {
             if let Some(sid) = obj.get("sessionId").and_then(|s| s.as_str()) {
                 sessions.insert(sid.to_string());
@@ -451,8 +500,7 @@ fn build_core(
     // Events: skills + denied/blocked commands (events carry their own branch).
     let mut skill_counts: HashMap<String, u64> = HashMap::new();
     for obj in events {
-        let branch = obj.get("branch").and_then(|b| b.as_str()).unwrap_or("");
-        if !matches(branch) {
+        if !scope(obj) {
             continue;
         }
         let event = obj.get("event").and_then(|e| e.as_str()).unwrap_or("");
@@ -495,23 +543,16 @@ fn build_core(
     core.failures.sort_by(|a, b| b.ts.cmp(&a.ts));
 
     // Flow: Claude pipeline up to PR merge.
-    let pr_count = match filter {
-        Some(b) => {
-            if branch_pr.contains_key(b) {
-                1
-            } else {
-                0
-            }
-        }
-        None => pr_total,
+    let pr_count = if is_run {
+        run_branch.map_or(0, |b| if branch_pr.contains_key(b) { 1 } else { 0 })
+    } else {
+        pr_total
     };
     let skill = |name: &str| -> u64 { *skill_counts.get(name).unwrap_or(&0) };
-    // A run always represents one /start-issue, even when hook events are sparse.
-    let start_issue = if filter.is_some() {
-        skill("/start-issue").max(1)
-    } else {
-        skill("/start-issue")
-    };
+    // A run starts with /start-issue (asistido) or /implement (desatendido);
+    // force at least 1 for a run even when hook events are sparse.
+    let run_starts = skill("/start-issue") + skill("/implement");
+    let start_issue = if is_run { run_starts.max(1) } else { run_starts };
     let stages: Vec<(&str, &str, &str, u64)> = vec![
         ("prompt", "Prompt usuario", "prompt", core.summary.total_prompts),
         ("commands", "Comandos Claude", "command", core.summary.total_commands),
@@ -541,6 +582,206 @@ fn build_core(
     core
 }
 
+// ── Kingdom (gamified "Reino" view) ─────────────────────────────────────────
+
+/// Map a subagent (or skill) to a themed role based on its TYPE/name only.
+/// La descripción NO se usa: en flujos TDD casi todo menciona "test", lo que
+/// clasificaba erróneamente a casi todos los súbditos como cerebritos.
+fn role_for(subagent_type: &str) -> &'static str {
+    let s = subagent_type.to_lowercase();
+    if s.contains("review") || s.contains("qa") || s.contains("security") || s.contains("audit") {
+        "guardian"
+    } else if s.contains("test") || s.contains("mutation") {
+        "brain"
+    } else if s.contains("explore") || s.contains("search") || s.contains("research") {
+        "scout"
+    } else if s.contains("guide") || s.contains("doc") {
+        "guide"
+    } else {
+        "worker"
+    }
+}
+
+/// The most significant activity in an assistant record, as `(priority, phrase)`.
+/// Higher priority = more meaningful work; the kingdom shows the highest-priority
+/// activity across the run's window so frequent Bash noise doesn't drown out the
+/// real stage (writing a PR, committing, generating tests, …).
+fn activity_phrase(obj: &Value) -> Option<(u8, String)> {
+    let kind = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if kind == "pr-link" {
+        return Some((7, "Publicando la PR en GitHub".to_string()));
+    }
+    if kind != "assistant" {
+        return None;
+    }
+    let Some(Value::Array(blocks)) = obj.get("message").and_then(|m| m.get("content")) else {
+        return None;
+    };
+    let mut best: Option<(u8, String)> = None;
+    for b in blocks {
+        if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+            continue;
+        }
+        let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let input = b.get("input");
+        let cand: Option<(u8, String)> = match name {
+            "Skill" => {
+                let s = input
+                    .and_then(|i| i.get("skill"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                match s {
+                    // El propio arranque del run NO es "lo que está haciendo":
+                    // prioridad mínima, solo se muestra si no hay nada más.
+                    "implement" | "start-issue" => {
+                        Some((0, "Arrancando la issue".to_string()))
+                    }
+                    "test-gen" => Some((6, "Generando los tests".to_string())),
+                    "commit" => Some((6, "Commiteando los cambios".to_string())),
+                    "create-pr" => Some((6, "Abriendo la PR en GitHub".to_string())),
+                    "pr-review" => Some((6, "Revisando la PR".to_string())),
+                    other => Some((6, format!("Ejecutando la skill /{}", other))),
+                }
+            }
+            "Agent" | "Task" => {
+                let t = input
+                    .and_then(|i| i.get("subagent_type"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("subagente");
+                Some((5, format!("Desplegando un súbdito ({})", t)))
+            }
+            "Edit" | "Write" | "NotebookEdit" | "MultiEdit" => {
+                Some((4, "Escribiendo y editando código".to_string()))
+            }
+            "TodoWrite" | "TaskCreate" => {
+                Some((3, "Planificando las próximas tareas".to_string()))
+            }
+            "Read" | "Grep" | "Glob" => {
+                Some((2, "Explorando los ficheros del reino".to_string()))
+            }
+            "Bash" => Some((1, "Ejecutando comandos en el terminal".to_string())),
+            _ => None,
+        };
+        if let Some((p, ph)) = cand {
+            if best.as_ref().map_or(true, |(bp, _)| p > *bp) {
+                best = Some((p, ph));
+            }
+        }
+    }
+    best
+}
+
+/// Build the kingdom for one run: its subagents (subjects) and latest activity,
+/// over the records selected by `scope` (the run's session + time window).
+fn build_kingdom(records: &[Value], scope: &dyn Fn(&Value) -> bool) -> Kingdom {
+    let mut subjects: Vec<(String, Subject)> = Vec::new(); // (ts, subject)
+    let mut max_prio: u8 = 0; // máxima prioridad vista → decide el flag building
+    let mut latest_meaningful: Option<(String, String)> = None; // (ts, phrase) prio>=2
+    let mut latest_any: Option<(String, String)> = None; // (ts, phrase) fallback
+    let mut seen_skills: HashSet<String> = HashSet::new(); // one minion per skill
+
+    for obj in records {
+        if !scope(obj) {
+            continue;
+        }
+        let ts = obj
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if let Some((prio, phrase)) = activity_phrase(obj) {
+            if prio > max_prio {
+                max_prio = prio;
+            }
+            if latest_any.as_ref().map_or(true, |(t, _)| ts >= *t) {
+                latest_any = Some((ts.clone(), phrase.clone()));
+            }
+            // "En ese momento" = última acción significativa (ignora el ruido de
+            // Bash, prioridad 1) para que el rey narre la fase actual del run.
+            if prio >= 2 && latest_meaningful.as_ref().map_or(true, |(t, _)| ts >= *t) {
+                latest_meaningful = Some((ts.clone(), phrase));
+            }
+        }
+
+        if obj.get("type").and_then(|t| t.as_str()) == Some("assistant") {
+            if let Some(Value::Array(blocks)) =
+                obj.get("message").and_then(|m| m.get("content"))
+            {
+                for b in blocks {
+                    if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                        continue;
+                    }
+                    let input = b.get("input");
+                    match b.get("name").and_then(|n| n.as_str()) {
+                        // Subagentes lanzados (un súbdito por spawn).
+                        Some("Agent") | Some("Task") => {
+                            let subagent_type = input
+                                .and_then(|i| i.get("subagent_type"))
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let label = input
+                                .and_then(|i| i.get("description"))
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            subjects.push((
+                                ts.clone(),
+                                Subject {
+                                    role: role_for(&subagent_type).to_string(),
+                                    label: truncate(&label, 60),
+                                    subagent_type,
+                                },
+                            ));
+                        }
+                        // Skills del flujo (un súbdito por skill distinta); el
+                        // arranque del propio run no cuenta como súbdito.
+                        Some("Skill") => {
+                            let skill = input
+                                .and_then(|i| i.get("skill"))
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("");
+                            if skill.is_empty()
+                                || matches!(skill, "implement" | "start-issue")
+                                || !seen_skills.insert(skill.to_string())
+                            {
+                                continue;
+                            }
+                            subjects.push((
+                                ts.clone(),
+                                Subject {
+                                    role: role_for(skill).to_string(),
+                                    label: format!("/{}", skill),
+                                    subagent_type: format!("skill:{}", skill),
+                                },
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    subjects.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    subjects.truncate(40);
+
+    // "En obras" hasta que haya trabajo real: prioridad < 4 = solo arranque,
+    // lecturas, comandos o planificación (sin editar código, lanzar subagente,
+    // skill ni PR). Edit(4)/Agent(5)/Skill(6)/PR(7) terminan de construir.
+    let building = max_prio < 4;
+
+    Kingdom {
+        activity: latest_meaningful
+            .or(latest_any)
+            .map(|(_, phrase)| phrase)
+            .unwrap_or_default(),
+        subjects: subjects.into_iter().map(|(_, s)| s).collect(),
+        building,
+    }
+}
+
 // ── Public entry point ─────────────────────────────────────────────────────
 
 struct RawRun {
@@ -549,6 +790,32 @@ struct RawRun {
     branch: String,
     started_at: String,
     session_id: String,
+}
+
+/// Substring entre dos marcadores (no incluidos), o None.
+fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = s.find(open)? + open.len();
+    let rest = &s[start..];
+    let end = rest.find(close)?;
+    Some(&rest[..end])
+}
+
+/// Args de un slash-command tecleado que arranca un run (`/implement`,
+/// `/start-issue`): `<command-name>/implement</command-name>
+/// <command-args>1457</command-args>`. None si no es un arranque de run.
+fn slash_run_args(text: &str) -> Option<String> {
+    let name = between(text, "<command-name>", "</command-name>")?
+        .trim()
+        .trim_start_matches('/');
+    if name != "implement" && name != "start-issue" {
+        return None;
+    }
+    Some(
+        between(text, "<command-args>", "</command-args>")
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+    )
 }
 
 pub fn collect(project_dir: &Path) -> Metrics {
@@ -560,7 +827,7 @@ pub fn collect(project_dir: &Path) -> Metrics {
     let mut raw_runs: Vec<RawRun> = Vec::new();
     let mut branches_seen: HashSet<String> = HashSet::new();
 
-    if let Some(tdir) = transcript_dir(project_dir) {
+    for tdir in transcript_dirs(project_dir) {
         let pattern = format!("{}/*.jsonl", tdir.to_string_lossy());
         if let Ok(paths) = glob::glob(&pattern) {
             for path in paths.flatten() {
@@ -591,17 +858,19 @@ pub fn collect(project_dir: &Path) -> Metrics {
                             }
                         }
                     } else if kind == "assistant" {
-                        // Detect /start-issue invocations.
+                        // Detect run starts: /start-issue (asistido) y /implement
+                        // (orquestador desatendido) arrancan ambos una run.
                         if let Some(Value::Array(blocks)) =
                             obj.get("message").and_then(|m| m.get("content"))
                         {
                             for b in blocks {
+                                let skill = b
+                                    .get("input")
+                                    .and_then(|i| i.get("skill"))
+                                    .and_then(|s| s.as_str());
                                 if b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
                                     && b.get("name").and_then(|n| n.as_str()) == Some("Skill")
-                                    && b.get("input")
-                                        .and_then(|i| i.get("skill"))
-                                        .and_then(|s| s.as_str())
-                                        == Some("start-issue")
+                                    && matches!(skill, Some("start-issue") | Some("implement"))
                                 {
                                     let args = b
                                         .get("input")
@@ -627,6 +896,32 @@ pub fn collect(project_dir: &Path) -> Metrics {
                                 }
                             }
                         }
+                    } else if kind == "user" {
+                        // Slash-command tecleado por el usuario (no es un tool_use
+                        // "Skill" pero también arranca un run):
+                        // <command-name>/implement</command-name><command-args>N</command-args>
+                        let text = obj
+                            .get("message")
+                            .and_then(|m| m.get("content"))
+                            .map(text_from_content)
+                            .unwrap_or_default();
+                        if let Some(args) = slash_run_args(&text) {
+                            raw_runs.push(RawRun {
+                                issue: args
+                                    .split_whitespace()
+                                    .next()
+                                    .unwrap_or("")
+                                    .to_string(),
+                                args,
+                                branch: branch.clone(),
+                                started_at: obj
+                                    .get("timestamp")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                session_id: sid.clone(),
+                            });
+                        }
                     }
                     records.push(obj);
                 }
@@ -648,7 +943,7 @@ pub fn collect(project_dir: &Path) -> Metrics {
     let pr_total = pr_urls.len() as u64;
 
     // Global dashboard.
-    let global = build_core(&records, &events, None, &branch_pr, pr_total);
+    let global = build_core(&records, &events, &|_| true, false, None, &branch_pr, pr_total);
 
     // Resolve the real branch for an issue (/start-issue records its pre-branch).
     let resolve_branch = |issue: &str, captured: &str| -> String {
@@ -664,16 +959,93 @@ pub fn collect(project_dir: &Path) -> Metrics {
         captured.to_string()
     };
 
-    // Per-run dashboards.
+    // Each run is scoped by its session + time window: from its own start until
+    // the next run started in the same session (open-ended if it's the last).
+    // This separates /implement runs, which all share the session branch (the
+    // work happens in detached worktrees) and would otherwise collapse into one.
+    // Key de dedup por run (issue + rama resuelta). Varios arranques de la MISMA
+    // issue+rama (p.ej. /start-issue seguido de /implement) son el mismo run y no
+    // deben truncarse la ventana entre sí.
+    let keys: Vec<String> = raw_runs
+        .iter()
+        .map(|r| format!("{}|{}", r.issue, resolve_branch(&r.issue, &r.branch)))
+        .collect();
+
+    let mut order: Vec<usize> = (0..raw_runs.len()).collect();
+    order.sort_by(|&a, &b| {
+        raw_runs[a]
+            .session_id
+            .cmp(&raw_runs[b].session_id)
+            .then(raw_runs[a].started_at.cmp(&raw_runs[b].started_at))
+    });
+
+    // La ventana termina en el siguiente arranque de la misma sesión con key
+    // DISTINTA (otra issue); los arranques de la misma issue se ignoran (no
+    // truncan). Abierta si no hay otro.
+    let mut window_end: HashMap<usize, Option<String>> = HashMap::new();
+    for (pos, &i) in order.iter().enumerate() {
+        let mut end = None;
+        for &j in &order[pos + 1..] {
+            if raw_runs[j].session_id != raw_runs[i].session_id {
+                break; // ordenado por sesión: no quedan más de esta sesión
+            }
+            if keys[j] != keys[i] {
+                end = Some(raw_runs[j].started_at.clone());
+                break;
+            }
+        }
+        window_end.insert(i, end);
+    }
+
+    // Pre-agrupar records por sesión (solo las que tienen runs) para que cada run
+    // procese SOLO los suyos, no los ~95K totales agregados de todos los worktrees.
+    // Evita el coste O(runs × records) que ralentizaba collect() en cada tick del
+    // watcher.
+    let run_sessions: HashSet<&str> = raw_runs.iter().map(|r| r.session_id.as_str()).collect();
+    let mut by_session: HashMap<String, Vec<Value>> = HashMap::new();
+    for obj in &records {
+        if let Some(sid) = obj.get("sessionId").and_then(|s| s.as_str()) {
+            if run_sessions.contains(sid) {
+                by_session.entry(sid.to_string()).or_default().push(obj.clone());
+            }
+        }
+    }
+
+    // Per-run dashboards. Recorremos en orden (sesión, inicio) y deduplicamos por
+    // key conservando el arranque más temprano (que ya tiene la ventana completa).
     let mut runs: Vec<IssueRun> = Vec::new();
     let mut seen_runs: HashSet<String> = HashSet::new();
-    for r in &raw_runs {
+    for &idx in &order {
+        let r = &raw_runs[idx];
         let branch = resolve_branch(&r.issue, &r.branch);
-        let dedup_key = format!("{}|{}", r.issue, branch);
-        if !seen_runs.insert(dedup_key) {
-            continue; // collapse repeated /start-issue for the same issue+branch
+        if !seen_runs.insert(keys[idx].clone()) {
+            continue; // mismo issue+rama ya procesado
         }
-        let core = build_core(&records, &events, Some(&branch), &branch_pr, pr_total);
+        let start = r.started_at.clone();
+        let end = window_end.get(&idx).cloned().flatten();
+        let session_id = r.session_id.clone();
+        let scope = |obj: &Value| -> bool {
+            let ts = obj.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
+            if !start.is_empty() && ts < start.as_str() {
+                return false;
+            }
+            if let Some(e) = &end {
+                if ts >= e.as_str() {
+                    return false;
+                }
+            }
+            match obj.get("sessionId").and_then(|s| s.as_str()) {
+                Some(sid) => sid == session_id,
+                None => true,
+            }
+        };
+        // Solo los records de la sesión de este run (no los ~95K globales).
+        let sess_records: &[Value] = by_session
+            .get(&session_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let core = build_core(sess_records, &events, &scope, true, Some(&branch), &branch_pr, pr_total);
+        let kingdom = build_kingdom(sess_records, &scope);
         runs.push(IssueRun {
             issue: r.issue.clone(),
             args: r.args.clone(),
@@ -682,6 +1054,7 @@ pub fn collect(project_dir: &Path) -> Metrics {
             session_id: r.session_id.clone(),
             pr_url: branch_pr.get(&branch).cloned().unwrap_or_default(),
             core,
+            kingdom,
         });
     }
     runs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
