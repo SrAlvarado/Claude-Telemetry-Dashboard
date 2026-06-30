@@ -2,19 +2,32 @@ import type { GithubPrState, GithubStates, IssueRun } from "../types";
 
 export type IssueStatus = "active" | "done" | "unknown";
 
-/** PR number for a run, from its prUrl, else matched by branch on GitHub. */
+/**
+ * True if `pr` belongs to issue `issue`. Matched by the issue number encoded in
+ * the branch (`<type>/<issue>-slug`) or in the title (`[#<issue>]`). We do NOT
+ * match by full branch equality: session branches are shared across issues
+ * (e.g. `harness/e6-bot-triage`), so a branch match would attribute one issue's
+ * PR to every run on that branch. The trailing `-` / non-digit guards stop
+ * `1478` from matching `11478` or `478`.
+ */
+function prMatchesIssue(pr: GithubPrState, issue: string): boolean {
+  const n = issue.trim();
+  if (!n) return false;
+  return new RegExp(`(?:^|/)${n}-`).test(pr.headRefName) || new RegExp(`#${n}(?!\\d)`).test(pr.title);
+}
+
+/** PR number for a run, from its prUrl, else matched to the run's issue on GitHub. */
 export function runPrNumber(run: IssueRun, gh: GithubStates): number | null {
   const fromUrl = run.prUrl.match(/\/pull\/(\d+)/);
   if (fromUrl) return Number(fromUrl[1]);
-  const pr = gh.prs.find((p) => p.headRefName === run.branch);
+  const pr = gh.prs.find((p) => prMatchesIssue(p, run.issue));
   return pr ? pr.number : null;
 }
 
 /** The GitHub PR backing a run, if any. */
 export function runPr(run: IssueRun, gh: GithubStates): GithubPrState | null {
   const n = runPrNumber(run, gh);
-  if (n != null) return gh.prs.find((p) => p.number === n) ?? null;
-  return gh.prs.find((p) => p.headRefName === run.branch) ?? null;
+  return n != null ? (gh.prs.find((p) => p.number === n) ?? null) : null;
 }
 
 /**

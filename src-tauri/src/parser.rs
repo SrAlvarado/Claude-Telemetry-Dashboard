@@ -818,11 +818,23 @@ fn slash_run_args(text: &str) -> Option<String> {
     )
 }
 
+/// PR URL backing a run. The association is per **session** — a run only owns a
+/// PR if a `pr-link` was emitted in that run's own session. It is NEVER inherited
+/// from the branch, because session branches are shared across issues (e.g.
+/// `harness/e6-bot-triage`) and a branch-keyed lookup would leak another issue's
+/// merged PR onto an unrelated run.
+fn run_pr_url(session_pr: &HashMap<String, String>, session_id: &str) -> String {
+    session_pr.get(session_id).cloned().unwrap_or_default()
+}
+
 pub fn collect(project_dir: &Path) -> Metrics {
     // Load all records and events once.
     let mut records: Vec<Value> = Vec::new();
     let mut session_branch: HashMap<String, String> = HashMap::new();
     let mut branch_pr: HashMap<String, String> = HashMap::new();
+    // PR keyed by the session that emitted its pr-link — precise per run, unlike
+    // branch_pr which leaks across issues that share a session branch.
+    let mut session_pr: HashMap<String, String> = HashMap::new();
     let mut pr_urls: HashSet<String> = HashSet::new();
     let mut raw_runs: Vec<RawRun> = Vec::new();
     let mut branches_seen: HashSet<String> = HashSet::new();
@@ -855,6 +867,9 @@ pub fn collect(project_dir: &Path) -> Metrics {
                             pr_urls.insert(url.clone());
                             if let Some(br) = session_branch.get(&sid) {
                                 branch_pr.insert(br.clone(), url.clone());
+                            }
+                            if !sid.is_empty() {
+                                session_pr.insert(sid.clone(), url.clone());
                             }
                         }
                     } else if kind == "assistant" {
@@ -1052,7 +1067,7 @@ pub fn collect(project_dir: &Path) -> Metrics {
             branch: branch.clone(),
             started_at: r.started_at.clone(),
             session_id: r.session_id.clone(),
-            pr_url: branch_pr.get(&branch).cloned().unwrap_or_default(),
+            pr_url: run_pr_url(&session_pr, &r.session_id),
             core,
             kingdom,
         });
@@ -1071,5 +1086,27 @@ pub fn collect(project_dir: &Path) -> Metrics {
         push_events: collect_push_events(project_dir),
         qa_reports: collect_qa_reports(project_dir),
         generated_at: Utc::now().to_rfc3339(),
+    }
+}
+
+#[cfg(test)]
+mod pr_association_tests {
+    use super::*;
+
+    #[test]
+    fn run_takes_its_own_session_pr() {
+        let mut session_pr = HashMap::new();
+        session_pr.insert("sessA".to_string(), "https://github.com/x/pull/1490".to_string());
+        assert_eq!(run_pr_url(&session_pr, "sessA"), "https://github.com/x/pull/1490");
+    }
+
+    #[test]
+    fn run_does_not_inherit_pr_from_another_session_on_shared_branch() {
+        // sessA (issue #1461) opened PR #1472; sessB (issue #1478) shares the
+        // session branch but opened no PR. sessB must NOT inherit #1472 — the old
+        // branch-keyed lookup did exactly that.
+        let mut session_pr = HashMap::new();
+        session_pr.insert("sessA".to_string(), "https://github.com/x/pull/1472".to_string());
+        assert_eq!(run_pr_url(&session_pr, "sessB"), "");
     }
 }
